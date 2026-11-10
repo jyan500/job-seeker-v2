@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python tools/tracker.py:*)",
+      "Bash(python tools/accounts.py:*)",
+      "Bash(python tools/notify.py:*)",
+      "PowerShell(python tools/tracker.py:*)",
+      "PowerShell(python tools/accounts.py:*)",
+      "PowerShell(python tools/notify.py:*)",
+      "Read(data/**)",
+      "mcp__claude-in-chrome"
+    ]
+  }
+}

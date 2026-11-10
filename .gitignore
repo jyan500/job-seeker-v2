@@ -1,0 +1,7 @@
+.env
+data/jobs.db
+data/resumes/
+data/profile.yaml
+data/criteria.yaml
+__pycache__/
+.pytest_cache/
