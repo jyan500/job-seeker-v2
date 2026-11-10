@@ -188,30 +188,80 @@ def _row(r) -> dict | None:
     return dict(r) if r is not None else None
 
 
+REAPPLY_AFTER_MONTHS = 6
+
+
+def months_before(day: date, months: int) -> date:
+    """Same day-of-month `months` earlier (clamped to the month's last day)."""
+    total = day.year * 12 + (day.month - 1) - months
+    year, month = divmod(total, 12)
+    month += 1
+    import calendar
+    last = calendar.monthrange(year, month)[1]
+    return date(year, month, min(day.day, last))
+
+
+def reapply_allowed(row, today: date | None = None) -> bool:
+    """True when the last application to this job is at least REAPPLY_AFTER_MONTHS old.
+
+    A record with no application date (seen, needs_review, skipped without a
+    date) always counts as a duplicate, so the pipeline is never re-applied to.
+    """
+    applied = row["applied_at"] if "applied_at" in row.keys() else None
+    if not applied:
+        return False
+    today = today or date.today()
+    last = date.fromisoformat(str(applied)[:10])
+    return last <= months_before(today, REAPPLY_AFTER_MONTHS)
+
+
 def find_duplicate(conn, *, source=None, job_id=None, company=None, title=None, apply_url=None):
+    """Return (blocking_row, reason, older_rows).
+
+    blocking_row is set when a matching record makes this a duplicate. older_rows
+    are matches whose last application is at least 6 months old, so re-applying
+    to them is allowed.
+    """
+    matches: list[tuple[object, str]] = []
     if source and job_id:
-        r = conn.execute(
-            "SELECT * FROM jobs WHERE source=? AND source_job_id=?", (source, str(job_id))
-        ).fetchone()
-        if r:
-            return r, "same source job id"
+        for r in conn.execute(
+            "SELECT * FROM jobs WHERE source=? AND source_job_id=? ORDER BY id", (source, str(job_id))
+        ):
+            matches.append((r, "same source job id"))
     if company and title:
-        r = conn.execute(
-            "SELECT * FROM jobs WHERE norm_key=? ORDER BY id LIMIT 1",
-            (norm_key(company, title),),
-        ).fetchone()
-        if r:
-            return r, "same company + title"
+        for r in conn.execute(
+            "SELECT * FROM jobs WHERE norm_key=? ORDER BY id", (norm_key(company, title),)
+        ):
+            matches.append((r, "same company + title"))
     cu = canon_url(apply_url)
     if cu:
-        r = conn.execute("SELECT * FROM jobs WHERE apply_url=? LIMIT 1", (cu,)).fetchone()
-        if r:
-            return r, "same apply url"
-    return None, None
+        for r in conn.execute("SELECT * FROM jobs WHERE apply_url=? ORDER BY id", (cu,)):
+            matches.append((r, "same apply url"))
+
+    blocking, older, seen_ids = None, [], set()
+    for r, why in matches:
+        if r["id"] in seen_ids:
+            continue
+        seen_ids.add(r["id"])
+        if reapply_allowed(r):
+            older.append((r, why))
+        elif blocking is None:
+            blocking = (r, why)
+    if blocking:
+        return blocking[0], blocking[1], older
+    return None, None, older
+
+
+def _older_summary(older) -> list[dict]:
+    return [
+        {"id": r["id"], "company": r["company"], "title": r["title"], "last_applied": str(r["applied_at"])[:10],
+         "match_reason": why}
+        for r, why in older
+    ]
 
 
 def cmd_check(args, conn):
-    r, why = find_duplicate(
+    r, why, older = find_duplicate(
         conn, source=args.source, job_id=args.job_id, company=args.company,
         title=args.title, apply_url=args.apply_url,
     )
@@ -219,12 +269,13 @@ def cmd_check(args, conn):
         "duplicate": r is not None,
         "match_reason": why,
         "existing": _row(r),
+        "reapply_allowed_for": _older_summary(older) if r is None else [],
         "norm_key": norm_key(args.company, args.title) if args.company and args.title else None,
     }
 
 
 def cmd_add(args, conn):
-    r, why = find_duplicate(
+    r, why, older = find_duplicate(
         conn, source=args.source, job_id=args.job_id, company=args.company,
         title=args.title, apply_url=args.apply_url,
     )
@@ -234,24 +285,28 @@ def cmd_add(args, conn):
         """INSERT INTO jobs (source, source_job_id, url, apply_url, company, title,
                              location, norm_key, match_score, status, reason,
                              work_type, is_contract, contract_length, site_label, resume_file, applied_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, CASE WHEN ?='applied' THEN datetime('now','localtime') END)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                   COALESCE(?, CASE WHEN ?='applied' THEN datetime('now','localtime') END))""",
         (
             args.source, str(args.job_id) if args.job_id else None, args.url,
             canon_url(args.apply_url), args.company, args.title, args.location,
             norm_key(args.company, args.title), args.score, args.status, args.reason,
             args.work_type, int(bool(args.contract or args.contract_length)),
             norm_contract_length(args.contract_length), args.site_label, args.resume,
-            args.status,
+            args.applied_on, args.status,
         ),
     )
     conn.commit()
-    return {"added": True, "id": cur.lastrowid}
+    return {"added": True, "id": cur.lastrowid, "reapply_allowed_for": _older_summary(older)}
 
 
 def cmd_set_status(args, conn):
     sets = ["status=?", "reason=COALESCE(?, reason)"]
     params: list = [args.status, args.reason]
-    if args.status == "applied":
+    if args.applied_on:
+        sets.append("applied_at=?")
+        params.append(args.applied_on)
+    elif args.status == "applied":
         sets.append("applied_at=COALESCE(applied_at, datetime('now','localtime'))")
     if args.apply_url:
         sets.append("apply_url=?")
@@ -370,13 +425,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("check"); job_args(sp, required=False); sp.set_defaults(fn=cmd_check)
     sp = sub.add_parser("add"); job_args(sp, required=True); detail_args(sp)
     sp.add_argument("--url"); sp.add_argument("--score", type=int)
+    sp.add_argument("--applied-on", help="YYYY-MM-DD date of an earlier application (e.g. from the sheet)")
     sp.add_argument("--status", choices=STATUSES, default="seen"); sp.add_argument("--reason")
     sp.set_defaults(fn=cmd_add)
 
     sp = sub.add_parser("set-status")
     sp.add_argument("id", type=int); sp.add_argument("status", choices=STATUSES)
     sp.add_argument("--reason"); sp.add_argument("--apply-url"); sp.add_argument("--score", type=int)
-    sp.add_argument("--location"); detail_args(sp)
+    sp.add_argument("--location"); sp.add_argument("--applied-on", help="YYYY-MM-DD date of an earlier application (e.g. from the sheet)")
+    detail_args(sp)
     sp.set_defaults(fn=cmd_set_status)
 
     sp = sub.add_parser("sheet-row"); sp.add_argument("id", type=int); sp.set_defaults(fn=cmd_sheet_row)

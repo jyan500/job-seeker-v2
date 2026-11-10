@@ -32,6 +32,9 @@ From the result list, collect for each card: source, job ID, company, title, loc
 ## 2. Dedup (before opening any posting)
 `python tools/tracker.py check --source <board> --job-id <id> --company "<co>" --title "<title>"`
 If `duplicate` is true, skip it. This covers the same posting seen again and the same role on another board.
+Exception: if the last application to this company (per the tracker, or the Google Sheet's date for the company) was 6 months or more ago, re-applying is allowed. Within 6 months, treat it as a duplicate.
+Sheet history: before opening a posting, search the Google Sheet (Ctrl+F on the company name, as in step 6b). If a row matches the same normalized key (company + title, as `tracker.py` computes it), record that history in the tracker with `python tools/tracker.py add ... --status skipped --applied-on <sheet date YYYY-MM-DD> --reason "Already in sheet: <row text> row <N>"`, or `set-status` if the record already exists. Then run `check` again so the 6-month rule applies.
+If a job is set to `needs_review` during the run, leave its browser tab open with the form or posting as far as it got, and tell the user which tab it is. Do not close it or start over later.
 
 ## 3. Match
 Open the posting and read the full description. Score it 0–100 against the profile and criteria:
@@ -94,7 +97,7 @@ For each applied job:
    - `warnings`: check these first. If the work type is missing, set it with `set-status <id> applied --work-type ...` and re-run.
 
    If `already_logged_row` is set, skip it.
-2. **Find the next empty row:** click the Name Box (the cell-reference box at the top left), type `A1`, press Enter, then Ctrl+End. Read the row number shown in the Name Box. Next row N = that + 1. Take a screenshot to confirm that row N is empty in columns A–E. If it isn't, move down until it is. Never overwrite a non-empty cell.
+2. **Find the next empty row:** click the Name Box (the cell-reference box at the top left), type `A2`, press Enter, then press Ctrl+Down. That jumps to the last filled row in column A (not the sheet's last row, since Ctrl+End goes to the far edge of the used range). If Ctrl+Down stops at a blank gap, press it again until it reaches the last filled row. Read the row number shown in the Name Box. Next row N = that + 1. Take a screenshot to confirm that row N is empty in columns A–E, treating a plain (non-hyperlinked) `Link` in column C as empty. If it isn't, move down until it is. Never overwrite a non-empty cell, except plain (non-hyperlinked) `Link` text in column C, which may be overwritten with the new row's link text and hyperlink.
 3. **Enter the values:** Name Box → `A<N>` → Enter. Type `cells.A`, Tab, `cells.B`, Tab, `cells.C.text`, Tab, `cells.D` (if any), Tab, `No Response`, Enter. If autocomplete suggests something different from what you typed, dismiss it (Escape before the key that moves cells), so the typed value is kept.
 4. **Link column C:** Name Box → `C<N>` → Enter, press Ctrl+K, paste or type `cells.C.url` into the link field and press Enter. Check that the cell shows the link text underlined in blue. If the link dialog won't cooperate, instead enter `=HYPERLINK("<url>","<text>")` into C<N>.
 5. **Colours (paste format only):**

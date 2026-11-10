@@ -151,3 +151,81 @@ def test_count_today_and_report(capsys):
     rep = run(capsys, "report")
     assert rep["counts"]["applied"] == 1 and rep["counts"]["needs_review"] == 1
     assert rep["needs_attention"][0]["company"] == "B"
+
+
+def test_months_before_clamps_day():
+    from datetime import date
+    assert tracker.months_before(date(2026, 11, 10), 6) == date(2026, 5, 10)
+    assert tracker.months_before(date(2026, 8, 31), 6) == date(2026, 2, 28)
+
+
+def test_reapply_allowed_after_six_months(capsys):
+    run(capsys, "add", "--source", "glassdoor", "--job-id", "1", "--company", "Robinhood",
+        "--title", "Full Stack Software Engineer", "--status", "applied", "--applied-on", "2025-10-17")
+    r = run(capsys, "check", "--source", "linkedin", "--job-id", "77", "--company", "Robinhood",
+            "--title", "Full Stack Software Engineer")
+    assert not r["duplicate"]
+    assert r["reapply_allowed_for"][0]["last_applied"] == "2025-10-17"
+
+
+def test_recent_application_blocks(capsys):
+    run(capsys, "add", "--source", "glassdoor", "--job-id", "2", "--company", "Superhuman",
+        "--title", "Software Engineer, Full-Stack", "--status", "applied", "--applied-on", "2026-05-18")
+    r = run(capsys, "check", "--company", "Superhuman", "--title", "Software Engineer, Full-Stack")
+    assert r["duplicate"] and r["match_reason"] == "same company + title"
+
+
+def test_unapplied_record_blocks(capsys):
+    run(capsys, "add", "--source", "linkedin", "--job-id", "3", "--company", "Coinbase",
+        "--title", "Software Engineer", "--status", "needs_review")
+    r = run(capsys, "check", "--company", "Coinbase", "--title", "Software Engineer")
+    assert r["duplicate"]
+
+
+def test_reapply_same_source_job_id_after_window(capsys):
+    r = run(capsys, "add", "--source", "jobright", "--job-id", "abc", "--company", "Intuitive",
+            "--title", "Full Stack Engineer", "--status", "applied", "--applied-on", "2026-01-14")
+    assert r["added"]
+    r = run(capsys, "check", "--source", "jobright", "--job-id", "abc", "--company", "Intuitive",
+            "--title", "Full Stack Engineer")
+    assert not r["duplicate"] and r["reapply_allowed_for"][0]["last_applied"] == "2026-01-14"
+    r = run(capsys, "add", "--source", "jobright", "--job-id", "abc", "--company", "Intuitive",
+            "--title", "Full Stack Engineer", "--status", "applied", "--applied-on", "2026-11-10")
+    assert r["added"]
+    # Both applications are kept, and the new one now blocks another re-apply.
+    r = run(capsys, "check", "--source", "jobright", "--job-id", "abc")
+    assert r["duplicate"] and r["existing"]["applied_at"][:10] == "2026-11-10"
+
+
+def test_same_source_job_id_within_window_blocks(capsys):
+    run(capsys, "add", "--source", "jobright", "--job-id", "abc", "--company", "Intuitive",
+        "--title", "Full Stack Engineer", "--status", "applied", "--applied-on", "2026-09-01")
+    r = run(capsys, "add", "--source", "jobright", "--job-id", "abc", "--company", "Intuitive",
+            "--title", "Full Stack Engineer", "--status", "applied", "--applied-on", "2026-11-10")
+    assert r["added"] is False and r["match_reason"] == "same source job id"
+
+
+def test_connect_drops_legacy_unique_index():
+    import sqlite3
+    import db
+    path = db.db_path()
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, "
+                "source_job_id TEXT, url TEXT, apply_url TEXT, company TEXT NOT NULL, title TEXT NOT NULL, "
+                "location TEXT, norm_key TEXT NOT NULL, match_score INTEGER, status TEXT NOT NULL DEFAULT 'seen', "
+                "reason TEXT, first_seen TEXT NOT NULL DEFAULT (datetime('now', 'localtime')), applied_at TEXT)")
+    old.execute("CREATE UNIQUE INDEX ux_jobs_source_id ON jobs(source, source_job_id) "
+                "WHERE source_job_id IS NOT NULL")
+    old.commit()
+    old.close()
+    conn = db.connect()
+    names = {r["name"] for r in conn.execute("PRAGMA index_list(jobs)")}
+    assert "ux_jobs_source_id" not in names and "ix_jobs_source_id" in names
+
+
+def test_add_respects_reapply_window(capsys):
+    run(capsys, "add", "--source", "linkedin", "--job-id", "4", "--company", "Acme",
+        "--title", "Software Engineer", "--status", "applied", "--applied-on", "2026-09-01")
+    r = run(capsys, "add", "--source", "linkedin", "--job-id", "5", "--company", "Acme",
+            "--title", "Software Engineer", "--status", "applied", "--applied-on", "2026-11-01")
+    assert r["added"] is False

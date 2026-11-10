@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     first_seen    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     applied_at    TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_jobs_source_id
+-- Not unique: the same posting may be applied to again once the re-apply window
+-- (tracker.REAPPLY_AFTER_MONTHS) has passed. tracker.find_duplicate enforces dedup.
+CREATE INDEX IF NOT EXISTS ix_jobs_source_id
     ON jobs(source, source_job_id) WHERE source_job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_jobs_norm_key ON jobs(norm_key);
 CREATE INDEX IF NOT EXISTS ix_jobs_apply_url ON jobs(apply_url);
@@ -61,6 +63,8 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # Databases created before re-applies were allowed have a unique index here.
+    conn.execute("DROP INDEX IF EXISTS ux_jobs_source_id")
     existing = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
     for col, decl in JOB_COLUMNS_V2.items():
         if col not in existing:
