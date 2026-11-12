@@ -32,6 +32,20 @@ def test_canon_url():
         "https://boards.greenhouse.io/acme/jobs/123"
 
 
+def test_canon_url_keeps_greenhouse_embed_identity():
+    a = tracker.canon_url("https://job-boards.greenhouse.io/embed/job_app?for=databento&token=8076835&jr_id=abc")
+    b = tracker.canon_url("https://job-boards.greenhouse.io/embed/job_app?for=ketch&token=4425423009&jr_id=xyz")
+    assert a == "https://job-boards.greenhouse.io/embed/job_app?for=databento&token=8076835"
+    assert a != b
+    # tracking params and param order don't matter
+    assert a == tracker.canon_url("https://job-boards.greenhouse.io/embed/job_app?token=8076835&for=databento&gh_src=x")
+    # gh_jid identifies the job on employers' own careers pages too
+    assert tracker.canon_url("https://careers.toasttab.com/jobs?gh_jid=8224111&jr_id=x") == \
+        "https://careers.toasttab.com/jobs?gh_jid=8224111"
+    # other hosts still drop the whole query string
+    assert tracker.canon_url("https://example.com/job?id=1&utm_source=x") == "https://example.com/job"
+
+
 def test_cross_board_duplicate(capsys):
     r = run(capsys, "add", "--source", "linkedin", "--job-id", "111", "--company", "Acme, Inc.",
             "--title", "Sr. Software Engineer", "--location", "Remote")

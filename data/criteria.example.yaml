@@ -12,6 +12,8 @@ posted_within_days: 7
 min_salary: 0                      # skip postings whose listed max is below this (0 = ignore)
 excluded_companies: []
 excluded_keywords: ["clearance required", "TS/SCI"]
+# Industries to never apply in. Judge by what the company does, not its tech stack.
+excluded_industries: []            # e.g. ["adult content", "cannabis", "gambling", "crypto"]
 match_threshold: 70                # >= apply; threshold-10..threshold-1 => needs_review; below => skip
 daily_cap: 25
 boards: ["linkedin", "builtin", "glassdoor", "jobright"]

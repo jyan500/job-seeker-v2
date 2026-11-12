@@ -27,7 +27,7 @@ All helper commands are run from the project root and print JSON:
 - **Glassdoor**: Jobs search with title + location, filter by date posted. The job ID is the `jobListingId` / `jl=` value.
 - **Jobright** (jobright.ai): start with the recommended-jobs feed, then a keyword search. The job ID comes from the job URL. Record Jobright's match % in the reason as a hint only.
 
-From the result list, collect for each card: source, job ID, company, title, location, URL. Skip cards that clearly fail the criteria (excluded company, wrong seniority, excluded keywords) without opening them, but still record them as `skipped` so they're not looked at again.
+From the result list, collect for each card: source, job ID, company, title, location, URL. Skip cards that clearly fail the criteria (excluded company, excluded industry when the company name or card makes it obvious, wrong seniority, excluded keywords) without opening them, but still record them as `skipped` so they're not looked at again.
 
 ## 2. Dedup (before opening any posting)
 `python tools/tracker.py check --source <board> --job-id <id> --company "<co>" --title "<title>"`
@@ -39,7 +39,8 @@ If a job is set to `needs_review` during the run, leave its browser tab open wit
 ## 3. Match
 Open the posting and read the full description. Score it 0–100 against the profile and criteria:
 - title/seniority fit (25), required skills overlap (30), years of experience vs. required (15), location/remote fit (15), sponsorship/clearance/other hard requirements (10), salary vs. `min_salary` when listed (5)
-- Hard fails get a score of 0: sponsorship needed but not offered, a clearance requirement, an excluded company or keyword, or an onsite-only role outside the target locations.
+- Hard fails get a score of 0: sponsorship needed but not offered, a clearance requirement, an excluded company, keyword or industry, or an onsite-only role outside the target locations.
+- **Excluded industries** (`criteria.excluded_industries`: adult content, cannabis, gambling, crypto): before scoring, work out what the company actually does from the posting's About section, and from the company page if the posting doesn't say. Judge the business, not the tech stack. A frontend role at a cannabis marketplace, a live-streaming cam site, a sportsbook or a crypto exchange fails, however good the skills match. If you can't tell what the company does, look it up before applying. If it still isn't clear, mark `needs_review` rather than guessing. Record it as `skipped` with the reason `excluded industry: <which>`, and add the company to `criteria.excluded_companies` so other boards skip it on sight.
 
 Also work out from the posting:
 - **work type**: `remote`, `hybrid` or `onsite` (in-person). Use the posting's own label first, then the description. If it's genuinely unclear, use `onsite` when a single office location is listed.
@@ -71,6 +72,10 @@ If `add` returns `duplicate: true`, skip it.
 
 ## 5. Captchas and human checks
 On reCAPTCHA, hCaptcha, a Cloudflare "verify you are human" page, or any puzzle: **never attempt to solve or bypass it.** Run `python tools/notify.py "Captcha" "<company> - <site>"`, keep the tab in front, ask the user to solve it and reply **done** (or **skip**), and end your turn. On done, check that the page moved on and continue. On skip, mark the job `blocked`.
+
+**Verification code box** (a code emailed or texted to the user before submit): fill in everything else, then `set-status <id> needs_review --reason "verification code required"`, keep the tab open, and tell the user which tab it is. They retrieve the code and submit by hand. Do not wait for it in this run. When they later say it's submitted, check the page for a confirmation if you can, set the job to `applied` and log it (step 6b).
+
+**"I agree" checkboxes** for terms or privacy statements: ask the user before ticking them.
 
 ## 6. Submit
 Check the filled form once, then submit. Confirm success (a confirmation page, "application submitted", or an email-confirmation message). Then:

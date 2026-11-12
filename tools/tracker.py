@@ -19,7 +19,7 @@ import json
 import re
 import sys
 from datetime import date
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from db import DATA_DIR, connect  # noqa: E402
@@ -82,12 +82,29 @@ def norm_key(company: str, title: str) -> str:
     return f"{norm_company(company)}|{norm_title(title)}"
 
 
+# Query parameters that identify the job itself, by host suffix. Everything else
+# (tracking: gh_src, jr_id, utm_*, ...) is dropped. Greenhouse embed links such as
+# /embed/job_app?for=acme&token=123 have no job in the path, so without these
+# every embedded application form would collapse to the same URL.
+_IDENTIFYING_PARAMS = {
+    "greenhouse.io": ("for", "token", "gh_jid"),
+}
+
+
 def canon_url(url: str | None) -> str | None:
     if not url:
         return None
     parts = urlsplit(url.strip())
+    host = parts.netloc.lower()
     path = parts.path.rstrip("/")
-    return urlunsplit((parts.scheme.lower() or "https", parts.netloc.lower(), path, "", ""))
+    q = parse_qs(parts.query)
+    keep = ("gh_jid",)  # Greenhouse job id, also used on employers' own careers pages
+    for suffix, params in _IDENTIFYING_PARAMS.items():
+        if host == suffix or host.endswith("." + suffix):
+            keep = params
+            break
+    query = urlencode([(k, q[k][0]) for k in keep if k in q])
+    return urlunsplit((parts.scheme.lower() or "https", host, path, query, ""))
 
 
 def short_title(title: str) -> str:
