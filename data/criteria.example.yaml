@@ -8,6 +8,8 @@ seniority: ["mid", "senior"]       # exclude e.g. intern, staff, principal, mana
 locations:
   - "Remote, United States"
 remote: "remote_or_hybrid"         # remote_only | remote_or_hybrid | any
+timezone: "Pacific"                # your home time zone
+remote_timezone_filter: true       # true = skip remote roles that require a different time zone than `timezone`
 posted_within_days: 7
 min_salary: 0                      # skip postings whose listed max is below this (0 = ignore)
 excluded_companies: []

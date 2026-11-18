@@ -22,6 +22,7 @@ links:
 work_authorization:
   authorized_us: true            # legally authorized to work in the US
   requires_sponsorship: false    # now or in the future
+  us_citizen: true               # answer "US citizen / citizenship required" questions with this
 preferences:
   desired_salary: 0              # annual USD; used when a number is required
   salary_answer: ""              # text answer, e.g. "Open / negotiable, targeting $X"
