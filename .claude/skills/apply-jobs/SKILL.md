@@ -19,9 +19,16 @@ All helper commands are run from the project root and print JSON:
    - If `resume.by_title` exists, then for each job use the first entry whose `match` appears (case-insensitive) in the job title, and otherwise the default. Note the resume used in the tracker `--reason` when it isn't the default.
 2. Run `python tools/tracker.py count-today`. Remaining = `daily_cap - applied_today` (and `max` if given). If remaining ≤ 0, report and stop.
 3. Before the first browser action, load the `anthropic-skills:chrome-browser` skill and follow it. Work only in tabs you open yourself and never touch the user's other tabs.
-4. Open each board you'll use. If LinkedIn, Glassdoor or Jobright shows a login page, run `notify.py "Login needed" "<board>"`, ask the user to sign in in that tab and reply **done**, then end your turn. Do not type the user's credentials for the job boards themselves.
+4. Open each board you'll use. If LinkedIn, Glassdoor or Jobright shows a login page, skip that board for this run, keep its login tab open, and list it in the final report as "login needed". Continue with the other boards. Do not type the user's credentials for the job boards themselves.
+
+## 0b. Run to completion
+Work through every board and every page of results before reporting. Don't stop to ask questions or report partway. Return to the user only when (a) all boards are fully searched and every collected job is handled or the daily cap is reached, or (b) an unrecoverable error stops the run (browser disconnected, tracker or sheet tooling broken, all boards blocked). A single job that can't be completed is not an error: handle it as below and continue.
+
+Any job that can't be applied to automatically (captcha, email or code verification, unanswerable required question, "I agree" checkbox, resume upload not possible, form that won't submit, unclear industry) gets set to `needs_review` (use `blocked` or `failed` only if `needs_review` doesn't fit, and leave its tab open too) with a specific reason. Leave its tab open with the form as far as it got, then move on to the next job. Record the tab's title and URL for the final report.
 
 ## 1. Search (one board at a time; order from `criteria.boards`)
+**Page through all results.** For each title × location search, go through every page of results (next page button, pagination links, or scrolling/"See more jobs" until no more load) until there are no further results or the results fall outside `posted_within_days`. Dedup and collect every card on every page before moving to the next search. Don't stop after the first page.
+
 - **LinkedIn**: Jobs search for each title × location. Filters: date posted (≤ `posted_within_days`), remote/hybrid per `criteria.remote`, experience level per `seniority`. Prefer "Easy Apply" postings but don't require them. The job ID is the number in `/jobs/view/<id>`.
 - **Built In** (builtin.com/jobs): search by title, apply the remote filter. The job ID is the trailing number in the job URL.
 - **Glassdoor**: Jobs search with title + location, filter by date posted. The job ID is the `jobListingId` / `jl=` value.
@@ -63,19 +70,19 @@ If `add` returns `duplicate: true`, skip it.
   1. `python tools/accounts.py get <current url>`
   2. If `exists`: log in with the `email` and the password from `python tools/accounts.py password`.
   3. If not: `python tools/accounts.py create <current url>`, then complete sign-up with the profile email and that password. Never print the password in your messages.
-  4. If the site asks to verify email: `python tools/notify.py "Verify email" "<company> - <domain>"`, tell the user which site sent the email, ask them to click it and reply **done** (or **skip**), and **end your turn**. When they reply done, reload, run `accounts.py mark-verified <domain>` and continue. If they reply skip, `set-status <id> blocked --reason "email verification"`.
+  4. If the site asks to verify email: `set-status <id> needs_review --reason "account email verification: <domain>"`, leave the tab open, and continue with the next job. List it in the final report so the user can verify and finish by hand. After they confirm, run `accounts.py mark-verified <domain>`.
 - **Form answers**: use `profile.yaml`. For questions it doesn't cover:
   - If the answer can be derived honestly from the profile (e.g. "years of Python?" from skills), answer it.
   - Optional questions: leave them blank, or use "decline to answer" for EEO.
   - Required questions you can't answer truthfully: `set-status <id> needs_review --reason "unanswerable: <question>"` and move on. Never invent experience, degrees or certifications.
-- **Resume upload not possible** (the file chooser can't be driven): notify the user, ask them to attach it and reply done, then end your turn.
+- **Resume upload not possible** (the file chooser can't be driven): set the job to `needs_review` (reason "resume upload not possible"), leave the tab open, and continue.
 
 ## 5. Captchas and human checks
-On reCAPTCHA, hCaptcha, a Cloudflare "verify you are human" page, or any puzzle: **never attempt to solve or bypass it.** Run `python tools/notify.py "Captcha" "<company> - <site>"`, keep the tab in front, ask the user to solve it and reply **done** (or **skip**), and end your turn. On done, check that the page moved on and continue. On skip, mark the job `blocked`.
+On reCAPTCHA, hCaptcha, a Cloudflare "verify you are human" page, or any puzzle: **never attempt to solve or bypass it.** Set the job to `needs_review` with reason "captcha", leave the tab open on the captcha, and continue with the next job. Report it at the end.
 
 **Verification code box** (a code emailed or texted to the user before submit): fill in everything else, then `set-status <id> needs_review --reason "verification code required"`, keep the tab open, and tell the user which tab it is. They retrieve the code and submit by hand. Do not wait for it in this run. When they later say it's submitted, check the page for a confirmation if you can, set the job to `applied` and log it (step 6b).
 
-**"I agree" checkboxes** for terms or privacy statements: ask the user before ticking them.
+**"I agree" checkboxes** for terms or privacy statements: don't tick them. Fill the rest, set `needs_review` (reason "agreement checkbox required"), leave the tab open, and continue.
 
 ## 6. Submit
 Check the filled form once, then submit. Confirm success (a confirmation page, "application submitted", or an email-confirmation message). Then:
@@ -115,8 +122,8 @@ For each applied job:
 If the sheet can't be reached or edited (signed out, no permission), don't block applying: keep going, and the job stays in `unlogged` for the next run. Notify the user once.
 
 ## 7. Pacing and safety
-- One job at a time. Act at a human pace, and don't open dozens of tabs. Close each job's tab when it's done.
-- If a board shows a rate limit, unusual-activity warning or account restriction, stop using that board for this run, notify the user, and continue with the others.
+- One job at a time. Act at a human pace, and don't open dozens of tabs. Close the tab of each job that was applied, skipped or otherwise finished. Never close a `needs_review` tab (or a `blocked`/`failed` one you couldn't finish).
+- If a board shows a rate limit, unusual-activity warning or account restriction, stop using that board for this run and continue with the others. Mention it in the final report.
 
 ## 8. Wrap up
-Run `python tools/tracker.py report` and summarize it for the user: applied today (company and title), plus needs-review, blocked and failed jobs with their reasons and URLs so they can follow up by hand.
+Run `python tools/tracker.py report` and summarize it for the user: applied today (company and title), then a **Needs manual attention** list of every job left with its tab open (needs-review, blocked and failed), each with company, title, reason, URL and which tab it is, so they can finish by hand. Also note boards skipped (login needed, rate limits) and pages searched per board. Finish with `python tools/notify.py "apply-jobs finished" "<n> applied, <m> need review"`.
