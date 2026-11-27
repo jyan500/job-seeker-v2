@@ -74,6 +74,7 @@ If `add` returns `duplicate: true`, skip it.
 - **Form answers**: use `profile.yaml`. For questions it doesn't cover:
   - If the answer can be derived honestly from the profile (e.g. "years of Python?" from skills), answer it.
   - Optional questions: leave them blank, or use "decline to answer" for EEO.
+  - **Essay questions** ("Why do you want to work at X?", "Why are you interested in...?", "Explain why you are a fit", etc.): write 2-3 sentences yourself. Extract the quantitative (years, languages, frameworks, scale) and qualitative (ownership, collaboration, mission, domain) asks from the job description and match them to real resume items. Resume facts only, no em-dashes. Then fill the rest of the form but **do not submit**: `set-status <id> needs_review --reason "essay answer drafted, awaiting user review: <question>"`, keep the tab open, and quote the draft in the final report. Submit only after the user approves (then `applied` and log to the sheet).
   - Required questions you can't answer truthfully: `set-status <id> needs_review --reason "unanswerable: <question>"` and move on. Never invent experience, degrees or certifications.
 - **Resume upload not possible** (the file chooser can't be driven): set the job to `needs_review` (reason "resume upload not possible"), leave the tab open, and continue.
 
